@@ -1,0 +1,188 @@
+-- Procedures
+-- Create a procedure to retrieve all orders and their total values for a given date range.
+
+delimiter //
+create procedure order_by_date_range (in start_date date , in end_date date) 
+begin
+select order_id, order_amount
+from orders
+where order_date_time between start_date and end_date;
+end //
+delimiter ;
+
+-- Write a procedure to update stock in the inventory table after an order is placed.
+
+delimiter //
+create procedure update_stock(in p_product_id int ,in p_quantity int)
+begin
+update inventory
+set stock = stock + p_quantity
+where product_id = p_product_id;
+end //
+delimiter ;
+
+select * from order_details;
+select * from inventory;
+-- Create a procedure to insert a new customer along with their initial order.
+
+call AcceptNewOrder ( "mamath",3443333333,'2025-01-20','M', 1,'[{"dish_id":"1" , "quantity":"2" },{"dish_id":"3" , "quantity":"2" },{"dish_id":"4" , "quantity":"1" }]');
+
+describe customers;
+describe order_details;
+drop PROCEDURE AcceptNewOrder;
+
+
+DELIMITER $$
+CREATE PROCEDURE AcceptNewOrder (
+    IN p_name VARCHAR(50),
+    IN p_number VARCHAR(10),
+    IN p_dob DATE,
+    IN p_gender CHAR(1),
+    IN p_payment_mode_id int,
+    IN p_dish_list JSON     -- JSON array of {dish_id: INT, quantity: INT}
+)
+BEGIN
+    DECLARE v_cx_id INT;
+    DECLARE v_order_id INT;
+    DECLARE v_order_amount DECIMAL(10,2) DEFAULT 0;
+    DECLARE v_dish_id INT;
+    DECLARE v_quantity INT;
+    DECLARE v_dish_price DECIMAL(10,2);
+    DECLARE done INT DEFAULT 0;
+
+    -- Declare a cursor to iterate through the JSON array
+    DECLARE dish_cursor CURSOR FOR
+        SELECT JSON_UNQUOTE(JSON_EXTRACT(dish, '$.dish_id')),
+               JSON_UNQUOTE(JSON_EXTRACT(dish, '$.quantity'))
+        FROM JSON_TABLE(p_dish_list, '$[*]' COLUMNS (dish JSON PATH '$')) as j;
+
+    -- Declare a handler for the end of the cursor
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
+
+    -- Step 1: Insert customer details into customer table
+    INSERT INTO customers (customer_name, customer_number, customer_dob, customer_gender)
+    VALUES (p_name, p_number, p_dob, p_gender);
+    SET v_cx_id = LAST_INSERT_ID(); -- Get the generated customer ID
+
+    -- Step 2: Create an entry in the order table
+    INSERT INTO orders (customer_id, order_date_time,order_amount, payment_mode_id)
+    VALUES (v_cx_id, sysdate(),0, p_payment_mode_id);
+    SET v_order_id = LAST_INSERT_ID(); -- Get the generated order ID
+
+    -- Step 3: Process each dish in the input dish list
+    OPEN dish_cursor;
+
+    dish_loop: LOOP
+        FETCH dish_cursor INTO v_dish_id, v_quantity;
+
+        IF done THEN
+            LEAVE dish_loop;
+        END IF;
+
+        -- Get dish price from the menu table
+        SELECT dish_price INTO v_dish_price
+        FROM menu
+        WHERE dish_id = v_dish_id;
+
+        -- Calculate total amount for this dish and add to order total
+        SET v_order_amount = v_order_amount + (v_dish_price * v_quantity);
+
+        -- Insert dish details into order_detail table
+        INSERT INTO order_details(order_id, dish_id, quantity)
+        VALUES (v_order_id, v_dish_id, v_quantity);
+    END LOOP;
+
+    CLOSE dish_cursor;
+
+    -- Step 4: Update the order amount in the order table
+    UPDATE orders
+    SET order_amount = v_order_amount
+    WHERE order_id = v_order_id;
+END $$
+DELIMITER ;
+
+-- Write a procedure to mark all employees as "present" for a given date.
+delimiter //
+create procedure present_all_emp (in p_date date)
+begin 
+update attandence
+set status = "Present"
+where date = p_date;
+end //
+delimiter ;
+
+
+-- Custom Functions --
+
+-- Write a function to calculate the total revenue for a given date range.
+delimiter //
+create function revenue_by_range ( start_date date ,  end_date date )
+returns int
+deterministic
+begin 
+
+declare total_revenue int;
+
+select sum(od.quantity * m.dish_price) into total_revenue
+from orders o
+join order_details od on o.order_id = od.order_id 
+join menu m on od.dish_id = m.dish_id
+where date(o.order_date_time) between start_date and end_date ;
+
+return total_revenue;
+
+end //
+delimiter ;
+
+
+
+-- Write a function to check if a product is below its low stock threshold.
+delimiter //
+create function check_stock_below_threshold ( p_product_id int)
+returns varchar(20)
+deterministic
+begin
+declare below_min_quantity varchar(20);
+select case when stock < low_stock then 'yes' else 'no' end into below_min_quantity
+from inventory where product_id = p_product_id;
+
+return below_min_quantity;
+end //
+delimiter ;
+
+
+-- Trigger --
+
+-- Create a trigger to automatically update the stock in the inventory table after a new order is added. 
+ 
+delimiter //
+create trigger update_inventory 
+after insert
+on order_details
+for each row 
+begin
+DECLARE done INT DEFAULT 0;
+declare ingredient_product_id int;
+declare ingredient_quantity int;
+
+DECLARE product_quantity_cursor CURSOR FOR
+select product_id, quantity 
+from ingredients
+where dish_id = new.dish_id; 
+DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
+
+OPEN product_quantity_cursor;
+
+item_loop: LOOP
+    FETCH product_quantity_cursor INTO ingredient_product_id, ingredient_quantity;
+    IF done THEN
+        LEAVE item_loop;
+    END IF;
+    
+    update inventory 
+	set stock = stock - (ingredient_quantity * new.quantity)
+	where product_id = ingredient_product_id;
+    
+END LOOP;
+end //
+delimiter ;

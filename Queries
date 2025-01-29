@@ -1,0 +1,167 @@
+-- Basic Queries
+-- List all customers who placed orders in the last 30 days.
+select distinct(o.customer_id) as cust_id, c.customer_name
+from orders o
+join customers c on o.customer_id = c.customer_id
+where order_date_time >= date_sub(curdate(), interval 30 day);
+
+-- Find the total number of orders placed by each customer.
+select customer_id, count(customer_id) as num_orders
+from orders
+group by 1;
+
+-- Retrieve the top 5 dishes by sales volume.
+select dish_id , sum(quantity) as total_order
+from order_details
+group by 1
+order by 2 desc
+limit 5;
+
+-- Calculate the total revenue generated in the current month.
+select sum(od.quantity * m.dish_price) as revenue 
+from order_details od
+join menu m on od.dish_id = m.dish_id;
+
+
+-- List all inventory items that are below their low stock threshold.
+select product_id
+from inventory
+where stock < low_stock;
+
+-- Find all employees who have been marked as "present" for more than 20 days in the last 30 days.
+EXPLAIN ANALYZE
+select a.emp_id, emp_name
+from Attandence a
+join employees e on a.emp_id = e.emp_id
+where status = "present"
+group by 1
+having count(status) > 15;
+
+
+-- Retrieve all orders with a total value greater than ₹2000.
+select order_id
+from orders
+where order_amount > 2000;
+
+-- Retrieve all customers with a overall total order value greater than ₹18000 .
+with CTE as
+(select 
+	distinct(customer_id) as customer, 
+	sum(order_amount) over ( partition by customer_id order by order_amount desc range between unbounded preceding and unbounded following )  as total
+from orders)
+select customer ,total
+from CTE 
+where total > 18000;
+
+
+-- List the average rating of all reviews grouped by customers.
+select customer_id, avg(star_ranking) as rating
+from reviews
+group by customer_id;
+
+-- Find the most frequently used payment mode for orders.
+select pm.payment_mode, count(o.payment_mode_id) as total
+from orders o
+join payment_mode pm on o.payment_mode_id = pm.payment_mode_id
+group by 1
+order by total desc
+limit 1;
+
+-- Retrieve all dishes and their corresponding cuisine names.
+select m.dish_id, m.dish_name, c.cuisine_name
+from menu m
+join cuisine c on m.cuisine_id = c.cuisine_id;
+
+
+-- Intermediate Queries
+-- Calculate the percentage contribution of each cuisine to the total revenue.
+select c.cuisine_name, concat(round( (sum(m.dish_price * od.quantity)*100/(select sum(m.dish_price * od.quantity) 
+from order_details od
+join menu m on od.dish_id = m.dish_id)),2) , " %") as "revenue by cuisine"
+from order_details od
+join menu m on od.dish_id = m.dish_id
+join cuisine c on m.cuisine_id = c.cuisine_id
+group by 1;
+
+with cte as
+(select 
+	distinct c.cuisine_name, 
+    sum(m.dish_price * od.quantity) over ( partition by c.cuisine_name ) as cuisine_total
+from order_details od
+join menu m on od.dish_id = m.dish_id
+join cuisine c on m.cuisine_id = c.cuisine_id )
+, cte2 as 
+(select
+	cuisine_name,
+    cuisine_total,
+	(select sum(m.dish_price * od.quantity) from order_details od join menu m on od.dish_id = m.dish_id) as revenue  
+from cte)
+select cuisine_name, concat(round((cuisine_total*100/revenue),2)," %") as "cuisine_revenue_%"
+from cte2;
+
+
+-- Identify customers who have never left a review for their orders.
+select customer_id
+from customers
+where customer_id not in ( select customer_id from reviews);
+
+-- Find all employees who have never taken a leave.
+select emp_id, emp_name
+from employees
+where emp_id not in (select emp_id from Attandence where status = "leave");
+
+
+-- Retrieve the details of all expenses incurred in the last 3 months, grouped by expense type.
+select et.expense_type, e.expense_id, e.amount, e.notes
+from expenses e
+join expense_type et on e.expense_type_id = et.expense_type_id
+group by et.expense_type, e.expense_id,  e.amount, e.notes;
+
+
+-- Calculate the total profit earned from orders by subtracting expense amounts from revenue.
+
+select 
+((select sum(m.dish_price * od.quantity) from order_details od join menu m on od.dish_id = m.dish_id) - (select sum(amount) from Expenses)) as Total_profit;
+
+-- List the top 3 customers based on their total order value.
+select customer_id, sum(order_amount) as total
+from orders
+group by 1
+order by total desc
+limit 3;
+
+
+-- Find all orders where the number of dishes exceeds 4.
+select order_id, count(order_id) as num_dish
+from order_details
+group by 1
+having num_dish > 4
+order by 1;
+
+-- Determine the average preparation time for dishes in each cuisine category.
+
+
+-- Find the day of the week with the highest number of orders in the last 2 months.
+select 
+	 dayname(order_date_time) as weekday_name,
+     count(order_id) as total_order
+from orders
+group by 1
+order by 2 desc
+limit 1;
+
+
+-- List all employees and their attendance percentage for the last 30 days.
+with cte as
+(select 
+	emp_id,
+    case
+		when lower(status) = "present" then 1
+        when lower(status) = "absent" then 0
+        when lower(status) = "leave" then 0
+        when lower(status) = "half-day" then 0.5 end as total_days_present
+from Attandence
+where date >= date_sub(curdate(),interval 30 day))
+select emp_id, concat(sum(total_days_present)*100/30," %") as "present %" 
+from cte
+group by 1;
